@@ -1,43 +1,64 @@
-# 우리의 방명록
+# 비둘기 서비스
 
-`01-Day1`부터 `08-Day8`까지 학습한 파이썬, FastAPI, Pydantic, pytest를 활용한 최소 구성 방명록입니다.
+정해진 세 사람이 1:1 대화방 두 개에서 메시지와 파일을 주고받는 작은 웹앱입니다.
 
-## 기능
+| 대화방 | 들어갈 수 있는 사람 |
+| --- | --- |
+| room1 | 허순태, 홍록기 |
+| room2 | 곽승현, 홍록기 |
 
-- 이름과 메시지 작성
-- 최근 작성 글부터 최대 100개 표시
-- SQLite 파일에 데이터 저장
-- 입력 길이 검증과 HTML 이스케이프
-- 상태 확인용 `GET /health`
+- 이름 선택 + 공용 비밀번호로 로그인 (비밀번호는 환경변수로만 보관)
+- 대화방 권한은 모든 요청에서 서버가 확인
+- 카카오톡 형식 말풍선, 3초마다 새 메시지만 받아와서 깜빡임 없음
+- 사진·음성·동영상·기타 파일 첨부 (파일당 20MB, 실행 파일 차단)
+- `/health`: UptimeRobot이 5분마다 호출, Supabase DB도 가볍게 조회
 
-데이터베이스는 파이썬 내장 `sqlite3`를 사용하며 `entries` 테이블 하나만 생성합니다. 화면은 HTML과 CSS로만 구성하고 JavaScript는 사용하지 않습니다.
+## 구조
+
+| 파일 | 역할 |
+| --- | --- |
+| `main.py` | FastAPI 앱과 주소별 처리 |
+| `auth.py` | 사용자·대화방 권한, 서명 쿠키 |
+| `store.py` | Supabase 저장소(배포)와 메모리 저장소(로컬·테스트) |
+| `templates.py` | HTML 화면 |
+| `models.py` | 메시지 입력 검증 |
+| `static/style.css`, `static/chat.js` | 디자인, 3초 새 메시지 받기 |
+| `supabase_schema.sql` | Supabase 테이블·버킷 생성 SQL |
+
+## 환경변수
+
+| 이름 | 설명 |
+| --- | --- |
+| `APP_PASSWORD` | 로그인 공용 비밀번호 |
+| `SESSION_SECRET` | 로그인 쿠키 서명용 긴 무작위 문자열 |
+| `SUPABASE_URL` | Supabase 프로젝트 URL |
+| `SUPABASE_SERVICE_KEY` | Supabase secret(service_role) 키. 서버에만 둡니다 |
+
+Render에서 실행할 때 위 값이 없으면 앱이 시작되지 않습니다.
+로컬에서 `SUPABASE_*`가 없으면 메모리 저장소를 쓰며, 서버를 끄면 대화가 사라집니다.
 
 ## 로컬 실행
 
-Education 폴더의 공용 가상환경을 사용하는 경우:
-
 ```bat
-cd /d "C:\Users\qlsjt\Desktop\encore-multi-agent\Education\day1-8"
-..\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+cd /d C:\Users\qlsjt\Desktop\Guestbook
+set APP_PASSWORD=local-test
+.venv\Scripts\python.exe -m uvicorn main:app --reload
 ```
 
 브라우저에서 `http://127.0.0.1:8000`을 엽니다.
 
-독립 가상환경이 필요하면 먼저 사용자 확인 후 `day1-8\.venv`를 생성합니다.
-
 ## 테스트
 
-독립 가상환경에서 테스트까지 설치할 때는 `requirements-dev.txt`를 사용합니다. 배포용 `requirements.txt`에는 실행에 필요한 패키지만 들어 있습니다.
-
 ```bat
-python -m pip install -r requirements-dev.txt
-..\.venv\Scripts\python.exe -m pytest -q
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m pytest -q
 ```
 
-테스트 데이터베이스는 pytest의 임시 폴더를 사용하므로 실제 `data\guestbook.db`를 변경하지 않습니다.
+테스트는 메모리 저장소를 사용하므로 Supabase에 접속하지 않습니다.
 
-## 배포 전 확인
+## 배포 (Render 무료 + Supabase 무료 + UptimeRobot 무료)
 
-무료 배포 서비스 중 일부는 재시작할 때 로컬 SQLite 파일이 삭제될 수 있습니다. 따라서 배포 서비스와 SQLite 지속 저장 방식은 사용자 승인 후 결정하고, 승인 전에는 배포나 외부 저장소 생성을 진행하지 않습니다.
-
-공식 문서를 비교한 결과와 승인 후 절차는 `DEPLOYMENT_OPTIONS.md`에 정리했습니다. 현재 우선 후보는 PythonAnywhere이며 실제 계정 작업은 승인 후 진행합니다.
+1. Supabase에서 프로젝트를 만들고 SQL Editor에서 `supabase_schema.sql`을 실행합니다.
+2. Render 서비스의 Environment에 환경변수 4개를 등록합니다.
+3. `main` 브랜치에 푸시하면 Render가 자동으로 배포합니다.
+4. UptimeRobot에서 `https://<서비스 주소>/health`를 5분 간격 HTTP 모니터로 등록합니다.
