@@ -11,6 +11,8 @@
   --primary: #4c6a92;
   --primary-strong: #3f5a7d;
   --primary-soft: #e8eef7;
+  --mine: #fee500;
+  --secret: #e6d9f7;
   --danger: #b4410e;
   --danger-soft: #fff1e8;
   --shadow: 0 12px 32px rgba(31, 42, 55, 0.08);
@@ -333,10 +335,24 @@ textarea {
   border-top-left-radius: 6px;
 }
 
+/* 내 말풍선은 모든 방에서 노란색 */
 .msg.mine .bubble {
-  color: #ffffff;
-  background: var(--primary);
+  color: #3a2f00;
+  background: var(--mine);
   border-top-right-radius: 6px;
+}
+
+/* 비밀 메시지 (받는 사람과 운영진 화면에만 나온다) */
+.msg.secret .bubble {
+  color: #3b1d63;
+  background: var(--secret);
+}
+
+.secret-tag {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.8;
 }
 
 .bubble > * + * {
@@ -467,4 +483,218 @@ textarea {
     border-radius: 24px;
     box-shadow: var(--shadow);
   }
+}
+
+/* 로그인 화면: Guest 입장, 안내 문구, 이름 입력 팝업 */
+.btn-secondary {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  color: var(--primary);
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  background: var(--primary-soft);
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--line);
+}
+
+.fine-print {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.dialog {
+  width: min(340px, calc(100% - 32px));
+  padding: 24px;
+  border: 0;
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+}
+
+.dialog::backdrop {
+  background: rgba(31, 42, 55, 0.4);
+}
+
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dialog-actions .btn-primary {
+  width: auto;
+  margin-top: 0;
+  padding: 10px 22px;
+}
+
+/* 개인·단체방 만들기 */
+.create-room {
+  margin-top: 22px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.create-room h2,
+.card h2 {
+  margin: 14px 0 4px;
+  font-size: 16px;
+}
+
+.form .check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.form .check input {
+  width: auto;
+}
+
+/* 대화방 머리글의 설정 메뉴와 읽기 전용 안내 */
+.chat-header {
+  position: relative;
+}
+
+.room-menu summary {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  list-style: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.room-menu summary:hover {
+  background: var(--primary-soft);
+}
+
+.menu-panel {
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  gap: 6px;
+  min-width: 250px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.menu-panel form {
+  display: flex;
+  gap: 6px;
+}
+
+.menu-panel input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.text-btn.danger {
+  color: var(--danger);
+}
+
+.text-btn.danger:hover {
+  background: var(--danger-soft);
+}
+
+.read-only {
+  margin: 0;
+  padding: 14px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+/* 운영진 대시보드 */
+.admin {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.admin-header h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 20px;
+}
+
+.card.wide {
+  max-width: none;
+  margin-bottom: 16px;
+  padding: 20px;
+}
+
+.admin-list {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.admin-item small {
+  flex: 1;
+  color: var(--muted);
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.inline-form input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }

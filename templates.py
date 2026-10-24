@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from html import escape
 
+from auth import Identity, MUTE_MINUTES
+
 
 KST = timezone(timedelta(hours=9))
 
@@ -13,6 +15,7 @@ ERROR_MESSAGES = {
     "blocked": "실행 파일은 보낼 수 없어요.",
     "empty_file": "빈 파일은 보낼 수 없어요.",
     "storage_full": "저장 공간이 가득 찼어요.",
+    "bad_name": "방 이름은 1~30자로 입력해 주세요.",
 }
 
 STATUS_MESSAGES = {
@@ -22,8 +25,10 @@ STATUS_MESSAGES = {
 }
 
 LOGO = '<span class="logo" aria-hidden="true">🕊️</span>'
+CONFIRM_DELETE = "return confirm('삭제하면 복구할 수 없습니다.')"
 
 
+# 구조: 문자열 조립 함수로 화면 생성 / 이유: 의존성이 없고 함수 하나가 화면 하나
 def _page(title: str, body: str, *, with_script: bool = False) -> str:
     script = '<script src="/static/chat.js" defer></script>' if with_script else ""
     return f"""<!doctype html>
@@ -74,16 +79,20 @@ def _attachment(message: dict) -> str:
     return f'<a class="file" href="{url}"><span class="file-icon">📎</span><span class="file-name">{name}</span><small>{size}</small></a>'
 
 
-def _bubble(message: dict, user: str) -> str:
-    mine = message["sender"] == user
+def _bubble(message: dict, uid: str) -> str:
+    mine = message.get("sender_id") == uid
+    secret = bool(message.get("private_to"))
     sender = "" if mine else f'<span class="sender">{escape(message["sender"])}</span>'
     parts = []
+    if secret:
+        parts.append('<small class="secret-tag">🔒 비밀 메시지</small>')
     if message.get("file_path"):
         parts.append(_attachment(message))
     if message.get("body"):
         text = escape(message["body"]).replace("\r\n", "\n").replace("\n", "<br>")
         parts.append(f"<p>{text}</p>")
-    return f"""<article class="msg {'mine' if mine else 'theirs'}" data-id="{int(message['id'])}">
+    classes = f"msg {'mine' if mine else 'theirs'}{' secret' if secret else ''}"
+    return f"""<article class="{classes}" data-id="{int(message['id'])}">
   {sender}
   <div class="msg-row">
     <div class="bubble">{''.join(parts)}</div>
@@ -93,72 +102,122 @@ def _bubble(message: dict, user: str) -> str:
 """
 
 
-def render_messages(messages: list[dict], user: str) -> str:
+# 구조: 첫 화면과 3초 새로고침이 같은 함수 사용 / 이유: 말풍선을 한 곳만 고치면 됨
+def render_messages(messages: list[dict], uid: str) -> str:
     """말풍선 HTML 조각. 첫 화면과 3초 새로고침에서 함께 쓴다."""
-    return "".join(_bubble(message, user) for message in messages)
+    return "".join(_bubble(message, uid) for message in messages)
 
 
-def render_login(users: tuple[str, ...], *, error: str | None = None, selected: str = "") -> str:
-    error_html = f'<p class="alert" role="alert">{escape(error)}</p>' if error else ""
-    placeholder = "" if selected in users else " selected"
-    options = "".join(
-        f'<option value="{escape(name, quote=True)}"{" selected" if name == selected else ""}>{escape(name)}</option>'
-        for name in users
-    )
+def _alert(error: str | None) -> str:
+    return f'<p class="alert" role="alert">{escape(error)}</p>' if error else ""
+
+
+def render_login(*, error: str | None = None, name: str = "") -> str:
     body = f"""<main class="center">
   <section class="card">
     <div class="brand">{LOGO}<h1>비둘기 서비스</h1></div>
     <p class="tagline">우리끼리 주고받는 작은 편지함</p>
-    {error_html}
+    {_alert(error)}
     <form class="form" action="/login" method="post">
-      <label for="name">이름</label>
-      <select id="name" name="name" required>
-        <option value="" disabled{placeholder}>이름을 선택하세요</option>
-        {options}
-      </select>
+      <label for="name">아이디</label>
+      <input id="name" name="name" type="text" value="{escape(name, quote=True)}"
+             autocomplete="username" required>
       <label for="password">비밀번호</label>
-      <input id="password" name="password" type="password" inputmode="numeric"
+      <input id="password" name="password" type="password"
              autocomplete="current-password" required>
-      <button class="btn-primary" type="submit">들어가기</button>
+      <button class="btn-primary" type="submit">입장하기</button>
     </form>
+    <button class="btn-secondary" type="button" id="guest-open">Guest 입장</button>
+    <p class="fine-print">운영진은 채팅방 내용을 확인할 수 있습니다</p>
   </section>
-</main>"""
+</main>
+
+<dialog id="guest-dialog" class="dialog">
+  <form class="form" action="/guest" method="post">
+    <label for="guest-name">Guest 입장</label>
+    <input id="guest-name" name="name" type="text" maxlength="20"
+           placeholder="본인의 이름을 입력해 주세요" autocomplete="off" required>
+    <div class="dialog-actions">
+      <button class="text-btn" type="button" id="guest-cancel">취소</button>
+      <button class="btn-primary" type="submit">입장</button>
+    </div>
+  </form>
+</dialog>
+<script>
+  const dialog = document.getElementById("guest-dialog");
+  document.getElementById("guest-open").addEventListener("click", () => dialog.showModal());
+  document.getElementById("guest-cancel").addEventListener("click", () => dialog.close());
+</script>"""
     return _page("로그인", body)
 
 
-def render_rooms(user: str, rooms: list[tuple[str, str]]) -> str:
+def render_rooms(
+    who: Identity,
+    rooms: list[tuple[str, str, str]],
+    *,
+    online: list[tuple[str, str]] | None = None,
+    show_admin: bool = False,
+) -> str:
+    """rooms는 (방 id, 제목, 설명) 목록. online을 주면 새 대화방 만들기 칸을 함께 보여준다."""
     items = "".join(
         f"""<li><a href="/rooms/{escape(room_id, quote=True)}">
-          <span class="avatar">{escape(partner[0])}</span>
-          <span><strong>{escape(partner)}</strong><small>{escape(user)} ↔ {escape(partner)}</small></span>
+          <span class="avatar">{escape(title[0])}</span>
+          <span><strong>{escape(title)}</strong><small>{escape(subtitle)}</small></span>
         </a></li>"""
-        for room_id, partner in rooms
+        for room_id, title, subtitle in rooms
     )
-    body = f"""<main class="center">
+    admin = '<a class="btn-secondary" href="/admin">운영진 대시보드</a>' if show_admin else ""
+    return _page("대화방 목록", f"""<main class="center">
   <section class="card">
     <div class="brand">{LOGO}<h1>비둘기 서비스</h1></div>
-    <p class="tagline">{escape(user)}님, 어느 대화방으로 갈까요?</p>
+    <p class="tagline">{escape(who.name)}님, 어느 대화방으로 갈까요?</p>
     <ul class="room-list">{items}</ul>
+    {admin}
+    {_create_room_form(online) if online is not None else ""}
     <form class="card-footer" action="/logout" method="post">
-      <span>{escape(user)}님으로 접속 중</span>
+      <span>{escape(who.name)}님으로 접속 중</span>
       <button class="text-btn" type="submit">로그아웃</button>
     </form>
   </section>
-</main>"""
-    return _page("대화방 목록", body)
+</main>""")
+
+
+def _create_room_form(online: list[tuple[str, str]]) -> str:
+    if online:
+        choices = "".join(
+            f'<label class="check"><input type="checkbox" name="members" value="{escape(uid, quote=True)}"> {escape(name)}</label>'
+            for uid, name in online
+        )
+        action = '<button class="btn-primary" type="submit">만들기</button>'
+    else:
+        choices = '<p class="fine-print">지금 접속 중인 다른 게스트가 없어요.</p>'
+        action = ""
+    return f"""<form class="form create-room" action="/rooms" method="post">
+      <h2>새 대화방</h2>
+      <p class="fine-print">1명을 고르면 개인방, 2명 이상 고르면 단체방이에요.</p>
+      {choices}
+      <label for="room-name">방 이름 (비워 두면 참여자 이름)</label>
+      <input id="room-name" name="name" type="text" maxlength="30">
+      {action}
+    </form>"""
 
 
 def render_chat(
-    user: str,
+    who: Identity,
     room_id: str,
-    partner: str,
+    title: str,
+    subtitle: str,
     messages: list[dict],
     *,
     used_bytes: int,
     storage_limit: int,
     max_upload_bytes: int,
     can_go_back: bool,
+    can_write: bool = True,
+    can_rename: bool = False,
+    can_delete: bool = False,
     error: str | None = None,
+    notice: str | None = None,
 ) -> str:
     error_html = ""
     if error in ERROR_MESSAGES:
@@ -166,22 +225,26 @@ def render_chat(
         error_html = f'<p class="alert" role="alert">{escape(text)}</p>'
 
     back = '<a class="icon-btn" href="/rooms" aria-label="대화방 목록">‹</a>' if can_go_back else ""
-    message_html = render_messages(messages, user) or '<p class="empty">아직 주고받은 메시지가 없어요.<br>첫 소식을 날려 보세요 🕊️</p>'
+    message_html = render_messages(messages, who.uid) or '<p class="empty">아직 주고받은 메시지가 없어요.<br>첫 소식을 날려 보세요 🕊️</p>'
     safe_room = escape(room_id, quote=True)
+    notice_attr = f' data-notice="{escape(notice, quote=True)}"' if notice else ""
 
-    body = f"""<div class="chat-app">
-  <header class="chat-header">
-    {back}
-    <span class="avatar">{escape(partner[0])}</span>
-    <div class="chat-title"><strong>{escape(partner)}</strong><span>{escape(user)}님으로 접속 중</span></div>
-    <form action="/logout" method="post"><button class="text-btn" type="submit">로그아웃</button></form>
-  </header>
+    menu = ""
+    if can_rename or can_delete:
+        rename = f"""<form action="/rooms/{safe_room}/rename" method="post">
+        <input name="name" type="text" maxlength="30" value="{escape(title, quote=True)}" aria-label="방 이름" required>
+        <button class="text-btn" type="submit">이름 변경</button>
+      </form>""" if can_rename else ""
+        delete = f"""<form action="/rooms/{safe_room}/delete" method="post" onsubmit="{CONFIRM_DELETE}">
+        <button class="text-btn danger" type="submit">방 삭제</button>
+      </form>""" if can_delete else ""
+        menu = f"""<details class="room-menu">
+      <summary aria-label="방 설정">⋯</summary>
+      <div class="menu-panel">{rename}{delete}</div>
+    </details>"""
 
-  <section id="messages" class="messages" data-room="{safe_room}" aria-live="polite">
-    {message_html}
-  </section>
-
-  <form class="composer" action="/rooms/{safe_room}/messages" method="post" enctype="multipart/form-data">
+    if can_write:
+        footer = f"""<form class="composer" action="/rooms/{safe_room}/messages" method="post" enctype="multipart/form-data">
     {error_html}
     <div class="composer-row">
       <label class="attach" title="파일 첨부">
@@ -195,13 +258,87 @@ def render_chat(
       <span id="file-name"></span>
       <span>파일당 {_size(max_upload_bytes)} · 사용량 {_size(used_bytes)} / {_size(storage_limit)}</span>
     </p>
-  </form>
+  </form>"""
+    else:
+        footer = '<p class="read-only">읽기 전용으로 보고 있어요.</p>'
+
+    body = f"""<div class="chat-app"{notice_attr}>
+  <header class="chat-header">
+    {back}
+    <span class="avatar">{escape(title[0])}</span>
+    <div class="chat-title"><strong>{escape(title)}</strong><span>{escape(subtitle)}</span></div>
+    {menu}
+    <form action="/logout" method="post"><button class="text-btn" type="submit">로그아웃</button></form>
+  </header>
+
+  <section id="messages" class="messages" data-room="{safe_room}" aria-live="polite">
+    {message_html}
+  </section>
+
+  {footer}
 </div>"""
-    return _page(f"{partner}님과의 대화", body, with_script=True)
+    return _page(f"{title}", body, with_script=True)
 
 
-def render_error(status_code: int) -> str:
-    message = STATUS_MESSAGES.get(status_code, "잠시 후 다시 시도해 주세요.")
+def render_admin(
+    guests: list[tuple[str, str]],
+    rooms: list[dict],
+    fixed_rooms: list[tuple[str, str]],
+) -> str:
+    """마스터 대시보드. guests는 접속 중인 게스트 (uid, 이름), fixed_rooms는 열람 링크 (방 id, 제목)."""
+    sanction_buttons = (
+        '<button class="text-btn danger" name="action" value="kick" type="submit">강퇴 1시간</button>'
+        + "".join(
+            f'<button class="text-btn" name="action" value="mute:{minutes}" type="submit">채팅 금지 {minutes}분</button>'
+            for minutes in MUTE_MINUTES
+        )
+    )
+    guest_items = "".join(
+        f"""<li class="admin-item">
+        <strong>{escape(name)}</strong>
+        <form class="inline-form" action="/admin/secret" method="post">
+          <input type="hidden" name="uid" value="{escape(uid, quote=True)}">
+          <input name="body" type="text" maxlength="1000" placeholder="비밀 메시지" required>
+          <button class="text-btn" type="submit">보내기</button>
+        </form>
+        <form class="inline-form" action="/admin/sanction" method="post">
+          <input type="hidden" name="uid" value="{escape(uid, quote=True)}">
+          {sanction_buttons}
+        </form>
+      </li>"""
+        for uid, name in guests
+    ) or '<li class="fine-print">지금 접속 중인 게스트가 없어요.</li>'
+
+    fixed_items = "".join(
+        f'<li class="admin-item"><a href="/rooms/{escape(room_id, quote=True)}">{escape(title)}</a></li>'
+        for room_id, title in fixed_rooms
+    )
+    room_items = "".join(
+        f"""<li class="admin-item">
+        <a href="/rooms/{escape(room['id'], quote=True)}">{escape(room['name'])}</a>
+        <small>{'개인' if len(room['members']) == 2 else '단체'} · {escape(', '.join(m['name'] for m in room['members']))}</small>
+        <form action="/rooms/{escape(room['id'], quote=True)}/delete" method="post" onsubmit="{CONFIRM_DELETE}">
+          <button class="text-btn danger" type="submit">방 삭제</button>
+        </form>
+      </li>"""
+        for room in rooms
+    ) or '<li class="fine-print">만들어진 개인·단체방이 없어요.</li>'
+
+    body = f"""<main class="admin">
+  <header class="admin-header">
+    <a class="icon-btn" href="/rooms" aria-label="대화방 목록">‹</a>
+    <h1>운영진 대시보드</h1>
+    <form action="/logout" method="post"><button class="text-btn" type="submit">로그아웃</button></form>
+  </header>
+  <section class="card wide"><h2>접속 중인 게스트</h2><ul class="admin-list">{guest_items}</ul></section>
+  <section class="card wide"><h2>대화방 열람 (읽기 전용)</h2><ul class="admin-list">{fixed_items}</ul></section>
+  <section class="card wide"><h2>개인·단체방</h2><ul class="admin-list">{room_items}</ul></section>
+</main>"""
+    return _page("운영진 대시보드", body)
+
+
+def render_error(status_code: int, message: str | None = None) -> str:
+    message = message or STATUS_MESSAGES.get(status_code, "잠시 후 다시 시도해 주세요.")
     body = f"""<main class="center">
   <section class="card">
     <div class="brand">{LOGO}<h1>비둘기 서비스</h1></div>
